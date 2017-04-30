@@ -37,6 +37,7 @@ data Expr =
   | Bool Bool
   | TExp Expr Type
   | Let Expr Expr Expr
+  | Num Int
   | If Expr Expr Expr deriving (Eq, Show)
 
 
@@ -89,6 +90,9 @@ isDot c = c == '.'
 isColon :: Char -> Bool
 isColon c = c == ':'
 
+int :: Parser Int
+int = read <$> some (satisfy isDigit)
+
 
 chainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
 chainl1 p sep = foldl (\acc (op,v) -> op acc v) <$>
@@ -136,17 +140,21 @@ ensure p parser = Parser $ \s ->
      Just (a,s') -> if p a then Just (a,s') else Nothing
 
 
-app, assign, lam, atom :: Parser Expr
+app, assign, lam, atom, ifelse :: Parser Expr
 typer :: Parser Type
-assign = Let <$> (spaces *> str "let" *> (Var <$> var' <* spaces') <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> lam <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> lam) <*> (str' "in" *> spaces' *> assign) 
-     <|> helper <$> (Let <$> (spaces *> str "let" *> ((TExp <$> (Var <$> var' <* spaces <* char ':' <* spaces) <*> (tfun <* spaces))) <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> lam <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> lam) <*> (str' "in" *> spaces' *> assign)) <|> lam
-lam = Lam <$> (spaces *> str "lambda" *> spaces' *> var) <*> (spaces *> char ':' *> spaces *> tfun <* spaces) <*> (spaces *> char '.' *> spaces *> lam) <|> Lam <$> (spaces *> str "lambda" *> spaces' *> str "(" *> var) <*> (spaces *> char ':' *> spaces *> tfun <* str ")") <*> lam2 <|> app
-lam2 = Lam <$> (spaces' *> str "(" *> var) <*> (spaces *> char ':' *> spaces *> tfun <* str ")") <*> lam2 <|> spaces *> char '.' *> spaces *> lam <|> app
+assign = Let <$> (spaces *> str "let" *> (Var <$> var' <* spaces) <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> lam <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> lam) <*> (str' "in" *> spaces' *> assign) 
+     <|> helper <$> (Let <$> (spaces *> str "let" *> ((TExp <$> (Var <$> var' <* spaces <* char ':' <* spaces) <*> (tfun <* spaces))) <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> lam <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> lam) <*> (str' "in" *> spaces' *> assign)) 
+     <|> lam
+lam = Lam <$> (spaces *> str "lambda" *> var') <*> (spaces *> char ':' *> spaces *> tfun <* spaces) <*> (spaces *> char '.' *> spaces *> lam) <|> Lam <$> (spaces *> str "lambda" *> spaces' *> str "(" *> var) <*> (spaces *> char ':' *> spaces *> tfun <* str ")") <*> lam2 
+      <|> ifelse
+lam2 = Lam <$> (spaces' *> str "(" *> var) <*> (spaces *> char ':' *> spaces *> tfun <* str ")") <*> lam2 <|> spaces *> char '.' *> spaces *> lam 
+      <|> ifelse
 tfun = TFun <$> (typer <* spaces <* str "->") <*> (spaces *> tfun <* spaces) <|> typer
 typer = Tint <$ str "int" <|> TBool <$ str "bool" <|> char '(' *> tfun <* char ')'
+ifelse = If <$> (spaces *> str "if" *> spaces' *> (lam <* spaces *> str "=="  *> spaces *> lam <|> lam) <* spaces' <* str "then" <* spaces') <*> (assign <* spaces' <* str "else" <* spaces') <*> assign 
+         <|> atom <|> app
 app = atom `chainl1` (spaces' *> pure App)  
-atom =  Var <$> var <|> (char '(' *> lam <* char ')')
-
+atom =  Num <$> int <|> Var <$> var <|> (char '(' *> lam <* char ')')
 helper:: Expr -> Expr
 helper (Let (TExp exp t) (exp2) (exp3)) = Let (exp) (TExp (exp2) t) (exp3)
 helper _                                = error "dumbass"
