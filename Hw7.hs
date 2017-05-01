@@ -360,6 +360,7 @@ sub m (Minus x y) = Minus (sub m x) (sub m y)
 sub m (And x y) = And (sub m x) (sub m y)
 sub m (Or x y) = Or (sub m x) (sub m y)
 sub m (Negative x) = Negative (sub m x) 
+sub m (Num x) = Num x
 sub m (Not x) = Not (sub m x)
 sub m (Fst x) = Fst (sub m x)  
 sub m (Snd x) = Snd (sub m x)  
@@ -428,4 +429,53 @@ evalNums (Multiply x y) = (evalNums x) * (evalNums y)
 evalNums (Divide x y) = (evalNums x) `div` (evalNums y)
 evalNums (Minus x y) = (evalNums x) - (evalNums y)
 evalNums (Negative x) =  - (evalNums x) 
+
+isDash :: [String] -> Bool
+isDash [] = False
+isDash lst = elem "-" lst 
+
+isU :: [String] -> Bool
+isU [] = False
+isU lst = elem "-u" lst
+
+isFile :: [String] -> Bool
+isFile [] = False
+isFile (x:xs) = if (not (isDash [x] || isU [x])) then
+                  True
+                else
+                  isFile xs
+
+getFile :: [String] -> IO String
+getFile lst = if (isFile lst) then
+                readFile (findFile lst)
+              else
+                getContents
+          where findFile [] = []
+                findFile (x:xs) = if (isFile [x]) then
+                                     x
+                                  else
+                                     findFile xs  
+
+getDash :: [String] -> IO String
+getDash lst = if (isDash lst) then
+                getContents
+              else
+                getFile lst
+
+getU :: String -> [String] -> IO ()
+getU str lst = if (isU lst) then
+  --finish this!
+                 if (isJust (parse assign str)) then                           
+                   putStr (show (eval (sub Map.empty (fst (fromJust (parse assign str))))))
+                 else
+                   die "Not parseable input"
+               else
+                 if (isJust (parse assign str)) then
+                   putStr (show (eval (sub Map.empty (fst (fromJust (parse assign str))))))
+                 else
+                   die "Not parseable input"
+
+
+main :: IO ()
+main = getArgs >>= (\x -> getDash x >>= (\y -> getU y x))
 
