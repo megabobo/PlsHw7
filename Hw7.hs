@@ -10,7 +10,7 @@ import Data.Maybe
 import System.Environment
 import System.Exit
 
-data Type = Trash | Tint | TBool | TFun Type Type deriving (Eq, Show)
+data Type = Tint | TBool | TFun Type Type | TPair Type Type deriving (Eq, Ord, Show)
 
 newtype Parser a = Parser { parse :: String -> Maybe (a,String) }
 
@@ -38,30 +38,23 @@ data Expr =
   | TExp Expr Type
   | Let Expr Expr Expr
   | Num Int
-  | TCompare Expr Comparison Expr
-  | TBinop Expr Binop Expr
-  | TUnop Unop Expr
-  | If Expr Expr Expr deriving (Eq, Show)
-
-data Comparison = 
-  Less
-  | Greater
-  | Leq
-  | Geq
-  | Equal deriving (Eq,Show) 
-
-data Binop = 
-  Multiply
-  | Divide
-  | Plus
-  | Minus
-  | And
-  | Or deriving (Eq,Show)
-data Unop = 
-  Negative
-  | Not
-  | Fst
-  | Snd deriving (Eq,Show)
+  | Less Expr Expr
+  | Greater Expr Expr
+  | Leq Expr Expr
+  | Geq Expr Expr
+  | Equal Expr Expr
+  | Multiply Expr Expr
+  | Divide Expr Expr
+  | Plus Expr Expr
+  | Minus Expr Expr
+  | And Expr Expr
+  | Or Expr Expr
+  | Negative Expr
+  | Not Expr
+  | Fst Expr
+  | Snd Expr
+  | If Expr Expr Expr 
+  | Pair Expr Expr deriving (Eq, Ord, Show)
 
 
 type Context = Map VarName Type
@@ -94,6 +87,10 @@ typeOf g (If e1 e2 e3) = do
     TBool | t2 == t3 -> pure t2
     TBool -> Left $ Mismatch e3 {- arbitrary! -} t3 t2
     _ -> Left $ Mismatch e1 t1 TBool
+typeOf g (TExp e t) = do
+  t1 <- typeOf g e
+  if (t1 ==  t) then pure t1
+  else Left $ Mismatch (TExp e t) t1 t   
 
 parens' :: String -> String
 parens' a = "(" ++ a ++ ")"
@@ -114,7 +111,7 @@ isColon :: Char -> Bool
 isColon c = c == ':'
 
 int :: Parser Int
-int = read <$> some (satisfy isDigit)
+int = spaces *> (read <$> some (satisfy isDigit))
 
 
 chainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
@@ -139,7 +136,7 @@ ws :: Parser ()
 ws = pure () <* many (satisfy isSpace)
 
 keywords :: [String]
-keywords = ["let", "in", "lambda", "if", "then", "else"]
+keywords = ["let", "in", "lambda", "if", "then", "else", "+", "*", "and", "or", "-", "/", "==", "<", "<=", ">", ">=", "not", "fst", "snd"]
 
 isKeyword = (`elem` keywords)
 
@@ -162,14 +159,39 @@ ensure p parser = Parser $ \s ->
      Nothing -> Nothing
      Just (a,s') -> if p a then Just (a,s') else Nothing
 
-parseCompare :: Parser Comparison
-parseCompare = Leq <$ str "<=" <|> Geq <$ str ">=" <|> Less <$ str "<" <|> Greater <$ str ">" <|> Equal <$ str "=="
+lam :: Parser Expr
+lam = spaces *> str "lambda" *> spaces' *> vars <|> TExp <$> (spaces *> char '(' *> lam <* spaces <* str ":" <* spaces) <*> (tfun <* char ')') <|> ifelse 
 
-lam' :: Parser Expr
-lam' = spaces *> str "lambda" *> spaces' *> vars <|> ifelse
+ifelse :: Parser Expr
+ifelse = If <$> (spaces *> str "if" *> spaces' *> binop)
+          <*> (str "then" *> spaces' *> lam)
+          <*> (spaces' *> str "else" *> spaces' *> lam)
+          <|> app
 
---inLambda :: Parser Expr
---inLambda = vars <*> lam' <|> char '(' *> inLambda <* char ')'
+binop :: Parser Expr
+binop = comp `chainl1` comparison
+    where comparison =  str "==" *> pure Equal
+                    <|> str "<"  *> pure Less
+                    <|> str ">"  *> pure Greater
+                    <|> str ">=" *> pure Geq
+                    <|> str "<=" *> pure Leq
+
+comp =  loose `chainl1` compOp
+      where compOp = str "+"  *> pure Plus
+                 <|> str "-"  *> pure Minus
+                 <|> str "or" *> pure Or
+
+loose = tight `chainl1` compOp
+     where compOp = str "*"   *> pure Multiply
+                <|> str "/"   *> pure Divide
+                <|> str "and" *> pure And
+
+tight = compOp <|> app
+     where compOp = Negative <$> (str "-"   *> atom)
+                <|> Not      <$> (str "not" *> atom)
+                <|> Fst      <$> (str "fst" *> atom)
+                <|> Snd      <$> (str "snd" *> atom)
+
 
 vars' :: Parser (Expr -> Expr)
 vars' = Lam <$> (var <* spaces <* char ':' <* spaces) 
@@ -177,28 +199,117 @@ vars' = Lam <$> (var <* spaces <* char ':' <* spaces)
 
 vars :: Parser Expr
 vars = Lam <$> (var <* spaces <* char ':' <* spaces) 
-           <*> (tfun <* spaces <* char '.' <* spaces <|> tfun <* spaces) <*> lam'
-           <|> char '(' *> vars' <* char ')' <* spaces <* char '.' <* spaces <*> lam'
+           <*> (tfun <* spaces <* char '.' <* spaces <|> tfun <* spaces) <*> lam
+           <|> char '(' *> vars' <* char ')' <* spaces <* char '.' <* spaces <*> lam
            <|> char '(' *> vars' <* char ')' <* spaces <*> vars
 
-app, assign, lam, atom, ifelse :: Parser Expr
+parsePair :: Parser Expr
+parsePair = Pair <$> (spaces *> char '(' *> spaces *> assign <* spaces <* char ',' <* spaces)
+                 <*> (assign <* spaces <* char ')') 
+
+app, assign, atom :: Parser Expr
 typer :: Parser Type
 assign = Let <$> (spaces *> str "let" *> (Var <$> var' <* spaces) <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> lam <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> lam) <*> (str' "in" *> spaces' *> assign) 
      <|> helper <$> (Let <$> (spaces *> str "let" *> ((TExp <$> (Var <$> var' <* spaces <* char ':' <* spaces) <*> (tfun <* spaces))) <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> lam <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> lam) <*> (str' "in" *> spaces' *> assign)) 
-     <|> lam
-lam = Lam <$> (spaces *> str "lambda" *> var') <*> (spaces *> char ':' *> spaces *> tfun <* spaces) <*> (spaces *> char '.' *> spaces *> lam) <|> Lam <$> (spaces *> str "lambda" *> spaces' *> str "(" *> var) <*> (spaces *> char ':' *> spaces *> tfun <* str ")") <*> lam2 
-      <|> ifelse
-lam2 = Lam <$> (spaces' *> str "(" *> var) <*> (spaces *> char ':' *> spaces *> tfun <* str ")") <*> lam2 <|> spaces *> char '.' *> spaces *> lam 
-      <|> ifelse
+     <|> binop <|> lam <|> parsePair
 tfun = TFun <$> (typer <* spaces <* str "->") <*> (spaces *> tfun <* spaces) <|> typer
 typer = Tint <$ str "int" <|> TBool <$ str "bool" <|> char '(' *> tfun <* char ')'
-ifelse = If <$> (spaces *> str "if" *> spaces' *> (TCompare <$> lam <* spaces <*> parseCompare <* spaces <*> lam <|> lam) <* spaces' <* str "then" <* spaces') 
-         <*> (assign <* spaces' <* str "else" <* spaces') <*> assign 
-         <|> app
 app = atom `chainl1` (spaces' *> pure App)  
-atom =  Num <$> int <|> Var <$> var <|> (char '(' *> lam <* char ')')
+atom = Bool True <$ str "true" <|> Bool False <$ str "false" <|> Num <$> int 
+       <|> Var <$> var <|> (char '(' *> lam <* char ')') <|> (char '(' *> binop <* char ')')
+       <|> parsePair
+
 helper:: Expr -> Expr
 helper (Let (TExp exp t) (exp2) (exp3)) = Let (exp) (TExp (exp2) t) (exp3)
 helper _                                = error "dumbass"
 
+sub :: Map Expr Expr -> Expr -> Expr
+sub m (Var x) = case Map.lookup (Var x) m of
+             Just v  -> v
+             Nothing -> Var x
+sub m (App x y) = App (sub m x) (sub m y)
+sub m (Lam x t y) = Lam x t (sub (Map.delete (Var x) m) y)
+sub m (Pair x y) = Pair (sub m x) (sub m y)
+sub m (If x y z) = If (sub m x) (sub m y) (sub m z)
+sub m (TExp e t) = sub m e
+sub m (Less x y) = Less (sub m x) (sub m y)
+sub m (Greater x y) = Greater (sub m x) (sub m y)
+sub m (Leq x y) = Leq (sub m x) (sub m y)
+sub m (Geq x y) = Geq (sub m x) (sub m y)
+sub m (Equal x y) = Equal (sub m x) (sub m y)
+sub m (Divide x y) = Divide (sub m x) (sub m y)
+sub m (Multiply x y) = Multiply (sub m x) (sub m y)
+sub m (Plus x y) = Plus (sub m x) (sub m y)
+sub m (Minus x y) = Minus (sub m x) (sub m y)
+sub m (And x y) = And (sub m x) (sub m y)
+sub m (Or x y) = Or (sub m x) (sub m y)
+sub m (Negative x) = Negative (sub m x) 
+sub m (Not x) = Not (sub m x)
+sub m (Fst x) = Fst (sub m x)  
+sub m (Snd x) = Snd (sub m x)  
+sub m (Let x y rest) = case eval (sub m y) of
+                           (Var interpreted) -> sub (Map.insert x (Var interpreted) m) rest
+                           test        -> sub (Map.insert x test m) rest
+
+substitute :: String -> Expr -> Expr -> Expr
+substitute s (Var a) subIn = if (s == a) then
+                               subIn 
+                             else
+                               (Var a)
+substitute s (Lam l t a) subIn = if (s == l) then
+                                    Lam l t a 
+                                  else 
+                                    Lam l t (substitute s a subIn)
+substitute s (App a b) subIn = App (substitute s a subIn) (substitute s b subIn)                           
+
+replace :: String -> Expr -> Expr -> Expr
+replace x l (Var a) = if (a == x) then
+                          l
+                        else
+                          substitute x l (Var a)
+replace x l a = substitute x l a
+
+eval :: Expr -> Expr
+eval (App (Lam x t y) (App a b)) = eval (App (Lam x t y) (eval (App a b)))
+eval (App (Lam x t y) z) = eval (replace x y z)
+eval (App (App a b) z) = eval (App (eval (App a b)) z)
+eval (TExp e t) = eval e
+eval (Less x y) = Bool ((evalNums x) < (evalNums y))
+eval (Greater x y) = Bool ((evalNums x) > (evalNums y))
+eval (Leq x y) = Bool ((evalNums x) <= (evalNums y))
+eval (Geq x y) = Bool ((evalNums x) >= (evalNums y))
+eval (Multiply x y) = Num ((evalNums x) * (evalNums y))
+eval (Divide x y) = Num ((evalNums x) `div` (evalNums y))
+eval (Plus x y) = Num ((evalNums x) + (evalNums y))
+eval (Minus x y) = Num ((evalNums x) - (evalNums y))
+eval (And x y) = Bool ((evalBools x) && (evalBools y))
+eval (Or x y) = Bool ((evalBools x) || (evalBools y))
+eval (Negative x) = Num (- (evalNums x))
+eval (Not x) = Bool (not $ evalBools x)
+eval (Fst (Pair x _)) = eval x
+eval (Snd (Pair _ y)) = eval y
+eval (If x y z) = If (Bool $ evalBools x) (eval y) (eval z)
+eval (Pair x y) = Pair (eval x) (eval y)
+eval (Equal (Pair a b) (Pair c d)) = Bool ((eval a) == (eval c) && (eval b) == (eval d))
+eval (Equal x y) = Bool (eval x == eval y)
+eval x = x
+
+evalBools :: Expr -> Bool
+evalBools (Bool x) = x
+evalBools (And x y) = (evalBools x) && (evalBools y)
+evalBools (Or x y) = (evalBools x) || (evalBools y)
+evalBools (Not x) = not $ evalBools x
+evalBools (Equal x y) = (eval x) == (eval y)
+evalBools (Less x y) = (evalNums x) < (evalNums y)
+evalBools (Greater x y) = (evalNums x) > (evalNums y)
+evalBools (Leq x y) = (evalNums x) <= (evalNums y)
+evalBools (Geq x y) = (evalNums x) >= (evalNums y)
+
+evalNums :: Expr -> Int
+evalNums (Num x) = x
+evalNums (Plus x y) = (evalNums x) + (evalNums y)
+evalNums (Multiply x y) = (evalNums x) * (evalNums y)
+evalNums (Divide x y) = (evalNums x) `div` (evalNums y)
+evalNums (Minus x y) = (evalNums x) - (evalNums y)
+evalNums (Negative x) =  - (evalNums x) 
 
