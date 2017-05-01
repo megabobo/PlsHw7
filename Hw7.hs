@@ -38,7 +38,30 @@ data Expr =
   | TExp Expr Type
   | Let Expr Expr Expr
   | Num Int
+  | TCompare Expr Comparison Expr
+  | TBinop Expr Binop Expr
+  | TUnop Unop Expr
   | If Expr Expr Expr deriving (Eq, Show)
+
+data Comparison = 
+  Less
+  | Greater
+  | Leq
+  | Geq
+  | Equal deriving (Eq,Show) 
+
+data Binop = 
+  Multiply
+  | Divide
+  | Plus
+  | Minus
+  | And
+  | Or deriving (Eq,Show)
+data Unop = 
+  Negative
+  | Not
+  | Fst
+  | Snd deriving (Eq,Show)
 
 
 type Context = Map VarName Type
@@ -116,7 +139,7 @@ ws :: Parser ()
 ws = pure () <* many (satisfy isSpace)
 
 keywords :: [String]
-keywords = ["let", "in", "lambda"]
+keywords = ["let", "in", "lambda", "if", "then", "else"]
 
 isKeyword = (`elem` keywords)
 
@@ -139,6 +162,24 @@ ensure p parser = Parser $ \s ->
      Nothing -> Nothing
      Just (a,s') -> if p a then Just (a,s') else Nothing
 
+parseCompare :: Parser Comparison
+parseCompare = Leq <$ str "<=" <|> Geq <$ str ">=" <|> Less <$ str "<" <|> Greater <$ str ">" <|> Equal <$ str "=="
+
+lam' :: Parser Expr
+lam' = spaces *> str "lambda" *> spaces' *> vars <|> ifelse
+
+--inLambda :: Parser Expr
+--inLambda = vars <*> lam' <|> char '(' *> inLambda <* char ')'
+
+vars' :: Parser (Expr -> Expr)
+vars' = Lam <$> (var <* spaces <* char ':' <* spaces) 
+           <*> (tfun <* spaces) 
+
+vars :: Parser Expr
+vars = Lam <$> (var <* spaces <* char ':' <* spaces) 
+           <*> (tfun <* spaces <* char '.' <* spaces <|> tfun <* spaces) <*> lam'
+           <|> char '(' *> vars' <* char ')' <* spaces <* char '.' <* spaces <*> lam'
+           <|> char '(' *> vars' <* char ')' <* spaces <*> vars
 
 app, assign, lam, atom, ifelse :: Parser Expr
 typer :: Parser Type
@@ -151,8 +192,9 @@ lam2 = Lam <$> (spaces' *> str "(" *> var) <*> (spaces *> char ':' *> spaces *> 
       <|> ifelse
 tfun = TFun <$> (typer <* spaces <* str "->") <*> (spaces *> tfun <* spaces) <|> typer
 typer = Tint <$ str "int" <|> TBool <$ str "bool" <|> char '(' *> tfun <* char ')'
-ifelse = If <$> (spaces *> str "if" *> spaces' *> (lam <* spaces *> str "=="  *> spaces *> lam <|> lam) <* spaces' <* str "then" <* spaces') <*> (assign <* spaces' <* str "else" <* spaces') <*> assign 
-         <|> atom <|> app
+ifelse = If <$> (spaces *> str "if" *> spaces' *> (TCompare <$> lam <* spaces <*> parseCompare <* spaces <*> lam <|> lam) <* spaces' <* str "then" <* spaces') 
+         <*> (assign <* spaces' <* str "else" <* spaces') <*> assign 
+         <|> app
 app = atom `chainl1` (spaces' *> pure App)  
 atom =  Num <$> int <|> Var <$> var <|> (char '(' *> lam <* char ')')
 helper:: Expr -> Expr
