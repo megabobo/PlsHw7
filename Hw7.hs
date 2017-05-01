@@ -79,6 +79,7 @@ typeOf g e@(App e1 e2) = do
     TFun t11 t12 -> Left $ Mismatch e t2 t11
     _ -> Left $ ExpectedFunction e1 t1
 typeOf _ (Bool _) = pure TBool
+typeOf _ (Num _) = pure Tint
 typeOf g (If e1 e2 e3) = do
   t1 <- typeOf g e1
   t2 <- typeOf g e2
@@ -90,7 +91,120 @@ typeOf g (If e1 e2 e3) = do
 typeOf g (TExp e t) = do
   t1 <- typeOf g e
   if (t1 ==  t) then pure t1
-  else Left $ Mismatch (TExp e t) t1 t   
+  else Left $ Mismatch (TExp e t) t1 t
+
+typeOf g (Multiply e1 e2) = do
+  t1 <- typeOf g e1
+  t2 <- typeOf g e2
+  case (t1,t2) of
+     (Tint, Tint) -> pure t1
+     _         -> Left $ Mismatch (Multiply e1 e2) t1 t2
+
+typeOf g (Divide e1 e2) = do
+  t1 <- typeOf g e1
+  t2 <- typeOf g e2
+  case (t1,t2) of
+     (Tint, Tint) -> pure t1
+     _         -> Left $ Mismatch (Divide e1 e2) t1 t2
+
+typeOf g (Plus e1 e2) = do
+  t1 <- typeOf g e1
+  t2 <- typeOf g e2
+  case (t1,t2) of
+     (Tint, Tint) -> pure t1
+     _         -> Left $ Mismatch (Plus e1 e2) t1 t2 
+
+typeOf g (Minus e1 e2) = do
+  t1 <- typeOf g e1
+  t2 <- typeOf g e2
+  case (t1,t2) of
+     (Tint, Tint) -> pure t1
+     _         -> Left $ Mismatch (Minus e1 e2) t1 t2
+
+typeOf g (Equal e1 e2) = do
+  t1 <- typeOf g e1
+  t2 <- typeOf g e2
+  if (t1 == t2) then pure t1 
+    else Left $ Mismatch (Multiply e1 e2) t1 t2
+
+typeOf g (Less e1 e2) = do
+  t1 <- typeOf g e1
+  t2 <- typeOf g e2
+  case (t1,t2) of
+     (Tint, Tint) -> pure t1
+     _         -> Left $ Mismatch (Less e1 e2) t1 t2
+
+typeOf g (Greater e1 e2) = do
+  t1 <- typeOf g e1
+  t2 <- typeOf g e2
+  case (t1,t2) of
+     (Tint, Tint) -> pure t1
+     _         -> Left $ Mismatch (Greater e1 e2) t1 t2  
+
+typeOf g (Leq e1 e2) = do
+  t1 <- typeOf g e1
+  t2 <- typeOf g e2
+  case (t1,t2) of
+     (Tint, Tint) -> pure t1
+     _         -> Left $ Mismatch (Leq e1 e2) t1 t2
+
+typeOf g (Geq e1 e2) = do
+  t1 <- typeOf g e1
+  t2 <- typeOf g e2
+  case (t1,t2) of
+     (Tint, Tint) -> pure t1
+     _         -> Left $ Mismatch (Geq e1 e2) t1 t2
+
+typeOf g (And e1 e2) = do
+  t1 <- typeOf g e1
+  t2 <- typeOf g e2
+  case (t1,t2) of
+     (TBool, TBool) -> pure t1
+     _         -> Left $ Mismatch (And e1 e2) t1 t2
+
+typeOf g (Or e1 e2) = do
+  t1 <- typeOf g e1
+  t2 <- typeOf g e2
+  case (t1,t2) of
+     (TBool, TBool) -> pure t1
+     _         -> Left $ Mismatch (Or e1 e2) t1 t2
+
+typeOf g (Negative e1) = do
+  t1 <- typeOf g e1
+  case t1 of
+     Tint -> pure t1
+     _         -> Left $ Mismatch (Negative e1) t1 Tint
+
+typeOf g (Not e1) = do
+  t1 <- typeOf g e1
+  case t1 of
+     TBool -> pure t1
+     _         -> Left $ Mismatch (Not e1) t1 TBool
+
+typeOf g (Fst e1) = do
+  t1 <- typeOf g e1
+  case t1 of
+     TPair t2 t3 -> pure t2
+     _         -> Left $ Mismatch (Fst e1) t1 (TPair t1 t1)
+
+typeOf g (Snd e1) = do
+  t1 <- typeOf g e1
+  case t1 of
+     TPair t2 t3 -> pure t3
+     _         -> Left $ Mismatch (Snd e1) t1 (TPair t1 t1)
+
+typeOf g (Pair e1 e2) = do
+  t1 <- typeOf g e1
+  t2 <- typeOf g e2
+  pure (TPair t1 t2)
+
+typeOf g (Let e e1 e2) = do
+                          t1 <- typeOf g e1
+                          case e of
+                            (Var x) -> do
+                                         t2 <- typeOf (Map.insert x t1 g) e2
+                                         pure t2
+                            _     -> Left $ Mismatch (Let e e1 e2) t1 t1
 
 parens' :: String -> String
 parens' a = "(" ++ a ++ ")"
@@ -219,9 +333,11 @@ atom = Bool True <$ str "true" <|> Bool False <$ str "false" <|> Num <$> int
        <|> Var <$> var <|> (char '(' *> lam <* char ')') <|> (char '(' *> binop <* char ')')
        <|> parsePair
 
+
 helper:: Expr -> Expr
 helper (Let (TExp exp t) (exp2) (exp3)) = Let (exp) (TExp (exp2) t) (exp3)
 helper _                                = error "dumbass"
+
 
 sub :: Map Expr Expr -> Expr -> Expr
 sub m (Var x) = case Map.lookup (Var x) m of
