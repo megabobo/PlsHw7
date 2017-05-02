@@ -6,6 +6,7 @@ import Data.List
 
 import qualified Data.Map as Map
 import Data.Map (Map)
+import Data.Either
 import Data.Maybe
 import System.Environment
 import System.Exit
@@ -486,16 +487,16 @@ getDash lst = if (isDash lst) then
 
 getU :: String -> [String] -> IO ()
 getU str lst = if (isU lst) then
-  --finish this!
                  if (isJust (parse assign str)) then                           
-                   putStr (show (eval (sub Map.empty (fst (fromJust (parse assign str))))))
+                   putStr (show lc)
                  else
                    die "Not parseable input"
                else
-                 if (isJust (parse assign str)) then
-                   putStr (show (eval (sub Map.empty (fst (fromJust (parse assign str))))))
+                 if (isJust (parse assign str) && (isRight(typeOf Map.empty lc))) then
+                   putStr (show lc)
                  else
                    die "Not parseable input"
+                where lc = eval (sub Map.empty (fst (fromJust (parse assign str))))
 
 
 main :: IO ()
