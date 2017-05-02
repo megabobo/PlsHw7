@@ -278,17 +278,17 @@ lam = spaces *> str "lambda" *> spaces' *> vars <|> TExp <$> (spaces *> char '('
 
 ifelse :: Parser Expr
 ifelse = If <$> (spaces *> str "if" *> spaces' *> binop)
-          <*> (str "then" *> spaces' *> lam)
-          <*> (spaces' *> str "else" *> spaces' *> lam)
+          <*> (str "then" *> spaces' *> assign) --changed, was lam
+          <*> (spaces' *> str "else" *> spaces' *> assign) --changed, was lam
           <|> app
 
 binop :: Parser Expr
 binop = comp `chainl1` comparison
     where comparison =  str "==" *> pure Equal
+                    <|> str ">=" *> pure Geq     --changed, switched the order of >,< with >=, <= 
+                    <|> str "<=" *> pure Leq
                     <|> str "<"  *> pure Less
                     <|> str ">"  *> pure Greater
-                    <|> str ">=" *> pure Geq
-                    <|> str "<=" *> pure Leq
 
 comp =  loose `chainl1` compOp
       where compOp = str "+"  *> pure Plus
@@ -310,12 +310,13 @@ tight = compOp <|> app
 vars' :: Parser (Expr -> Expr)
 vars' = Lam <$> (var <* spaces <* char ':' <* spaces) 
            <*> (tfun <* spaces) 
+           <|> spaces *> char '(' *> vars' <* spaces <* char ')' --added, lambda ((x:int)). x
 
 vars :: Parser Expr
-vars = Lam <$> (var <* spaces <* char ':' <* spaces) 
-           <*> (tfun <* spaces <* char '.' <* spaces <|> tfun <* spaces) <*> lam
-           <|> char '(' *> vars' <* char ')' <* spaces <* char '.' <* spaces <*> lam
-           <|> char '(' *> vars' <* char ')' <* spaces <*> vars
+vars = Lam <$> (var <* char ':' <* spaces) 
+           <*> (tfun <* spaces <* char '.' <* spaces <|> tfun <* spaces) <*> assign -- changed, was lam
+           <|> spaces *> char '(' *> vars' <*  spaces <* char ')' <* spaces <* char '.' <* spaces <*> assign --changed, was lam
+           <|> spaces *> char '(' *> vars' <* spaces <* char ')' <* spaces <*> vars
 
 parsePair :: Parser Expr
 parsePair = Pair <$> (spaces *> char '(' *> spaces *> assign <* spaces <* char ',' <* spaces)
@@ -332,6 +333,7 @@ app = atom `chainl1` (spaces' *> pure App)
 atom = Bool True <$ str "true" <|> Bool False <$ str "false" <|> Num <$> int 
        <|> Var <$> var <|> (char '(' *> lam <* char ')') <|> (char '(' *> binop <* char ')')
        <|> parsePair
+       <|> char '(' *> assign <* char ')'
 
 
 helper:: Expr -> Expr
@@ -373,17 +375,34 @@ substitute s (Var a) subIn = if (s == a) then
                                subIn 
                              else
                                (Var a)
+substitute _ (Num x) _ = Num x
+substitute _ (Bool x) _ = Bool x
 substitute s (Lam l t a) subIn = if (s == l) then
                                     Lam l t a 
                                   else 
                                     Lam l t (substitute s a subIn)
-substitute s (App a b) subIn = App (substitute s a subIn) (substitute s b subIn)                           
+substitute s (App a b) subIn = App (substitute s a subIn) (substitute s b subIn)
+substitute s (Equal x y) subIn = Equal (substitute s x subIn) (substitute s y subIn)
+substitute s (Less x y) subIn = Less (substitute s x subIn) (substitute s y subIn)
+substitute s (Greater x y) subIn = Greater (substitute s x subIn) (substitute s y subIn)
+substitute s (Leq x y) subIn = Leq (substitute s x subIn) (substitute s y subIn)
+substitute s (Geq x y) subIn = Geq (substitute s x subIn) (substitute s y subIn)
+substitute s (Multiply x y) subIn = Multiply (substitute s x subIn) (substitute s y subIn)
+substitute s (Divide x y) subIn = Divide (substitute s x subIn) (substitute s y subIn)
+substitute s (Plus x y) subIn = Plus (substitute s x subIn) (substitute s y subIn)
+substitute s (Minus x y) subIn = Minus (substitute s x subIn) (substitute s y subIn)
+substitute s (Negative x) subIn = Negative (substitute s x subIn)
+substitute s (And x y) subIn = And (substitute s x subIn) (substitute s y subIn)
+substitute s (Or x y) subIn = Or (substitute s x subIn) (substitute s y subIn)
+substitute s (Pair x y) subIn = Pair (substitute s x subIn) (substitute s y subIn)
+substitute s (Not x) subIn = Not (substitute s x subIn)
+substitute s (If x y z) subIn = If (substitute s x subIn) (substitute s y subIn) (substitute s z subIn)                           
 
 replace :: String -> Expr -> Expr -> Expr
 replace x l (Var a) = if (a == x) then
-                          l
-                        else
-                          substitute x l (Var a)
+                        l
+                      else
+                        substitute x l (Var a)
 replace x l a = substitute x l a
 
 eval :: Expr -> Expr
@@ -405,7 +424,10 @@ eval (Negative x) = Num (- (evalNums x))
 eval (Not x) = Bool (not $ evalBools x)
 eval (Fst (Pair x _)) = eval x
 eval (Snd (Pair _ y)) = eval y
-eval (If x y z) = If (Bool $ evalBools x) (eval y) (eval z)
+eval (If x y z) = if (evalBools x) then --changed
+                    eval y
+                  else 
+                    eval z
 eval (Pair x y) = Pair (eval x) (eval y)
 eval (Equal (Pair a b) (Pair c d)) = Bool ((eval a) == (eval c) && (eval b) == (eval d))
 eval (Equal x y) = Bool (eval x == eval y)
