@@ -210,6 +210,9 @@ typeOf g (Let e e1 e2) = do
 parens' :: String -> String
 parens' a = "(" ++ a ++ ")"
 
+isAlphaNumOrQuote :: Char -> Bool
+isAlphaNumOrQuote x = (isAlphaNum x) || (x == '\'')
+
 spaces' :: Parser ()
 spaces' = some (satisfy isSpace) *> pure ()
 
@@ -217,7 +220,8 @@ char' :: Char -> Parser Char
 char' c = spaces' *> satisfy (==c)
 
 var' :: Parser String
-var' = ensure (not . isKeyword) $ spaces' *> (Parser $ \s -> if (length s /= 0 && isAlpha (head s)) then Just("", s) else Nothing) *> many (satisfy isAlphaNum)
+var' = ensure (not . isKeyword) $ spaces' *> (Parser $ \s -> if (length s /= 0 && isAlpha (head s)) then Just("", s) else Nothing) 
+       *> many (satisfy isAlphaNumOrQuote)
 
 isDot :: Char -> Bool
 isDot c = c == '.'
@@ -266,7 +270,8 @@ str' s = spaces' *> loop s
         loop (c:cs) = (:) <$> satisfy (==c) <*> loop cs        
 
 var :: Parser String
-var = ensure (not . isKeyword) $ ws *> (Parser $ \s -> if (length s /= 0 && isAlpha (head s)) then Just("", s) else Nothing) *> many (satisfy isAlphaNum)
+var = ensure (not . isKeyword) $ ws *> (Parser $ \s -> if (length s /= 0 && isAlpha (head s)) then Just("", s) else Nothing) 
+      *> many (satisfy isAlphaNumOrQuote)
 
 ensure :: (a -> Bool) -> Parser a -> Parser a
 ensure p parser = Parser $ \s ->
@@ -325,8 +330,8 @@ parsePair = Pair <$> (spaces *> char '(' *> spaces *> assign <* spaces <* char '
 
 app, assign, atom :: Parser Expr
 typer :: Parser Type
-assign = Let <$> (spaces *> str "let" *> (Var <$> var' <* spaces) <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> lam <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> lam) <*> (str' "in" *> spaces' *> assign) 
-     <|> helper <$> (Let <$> (spaces *> str "let" *> ((TExp <$> (Var <$> var' <* spaces <* char ':' <* spaces) <*> (tfun <* spaces))) <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> lam <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> lam) <*> (str' "in" *> spaces' *> assign)) 
+assign = Let <$> (spaces *> str "let" *> (Var <$> var' <* spaces) <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> assign <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> assign) <*> (str' "in" *> spaces' *> assign) 
+     <|> helper <$> (Let <$> (spaces *> str "let" *> ((TExp <$> (Var <$> var' <* spaces <* char ':' <* spaces) <*> (tfun <* spaces))) <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> assign <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> assign) <*> (str' "in" *> spaces' *> assign)) 
      <|> binop <|> lam <|> parsePair
 tfun = TFun <$> (typer <* spaces <* str "->") <*> (spaces *> tfun <* spaces) <|> typer
 typer = Tint <$ str "int" <|> TBool <$ str "bool" <|> char '(' *> tfun <* char ')'
