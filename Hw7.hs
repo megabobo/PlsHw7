@@ -432,6 +432,8 @@ sub m (Snd x) = Snd (sub m x)
 sub m (Let x y rest) = case eval (sub m y) of
                            (Var interpreted) -> sub (Map.insert x (Var interpreted) m) rest
                            test        -> sub (Map.insert x test m) rest
+sub m (LetRec (TExp (Var x) t) y e2) = sub m (eval (App (Lam x t e2) v))
+                                      where v = sub m (eval (App (Lam x t y) (LetRec (TExp (Var x) t) y (Var x))))
 
 substitute :: String -> Expr -> Expr -> Expr
 substitute s (Var a) subIn = if (s == a) then
