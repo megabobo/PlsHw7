@@ -11,7 +11,7 @@ import Data.Maybe
 import System.Environment
 import System.Exit
 
-data Type = Tint | TBool | TFun Type Type | TPair Type Type deriving (Eq, Ord, Show)
+data Type = Tint | TBool | TFun Type Type | TPair Type Type deriving (Eq, Ord)
 
 newtype Parser a = Parser { parse :: String -> Maybe (a,String) }
 
@@ -56,7 +56,7 @@ data Expr =
   | Fst Expr
   | Snd Expr
   | If Expr Expr Expr 
-  | Pair Expr Expr deriving (Eq, Ord, Show)
+  | Pair Expr Expr deriving (Eq, Ord)
 
 
 type Context = Map VarName Type
@@ -64,6 +64,49 @@ type Context = Map VarName Type
 data TypeError = ExpectedFunction Expr Type
                | Mismatch Expr Type Type {- expression, got, expected -}
                | UnboundVariable VarName deriving Show
+
+instance Show Type where
+  show (Tint) = "int"
+  show (TBool) = "bool"
+  show (TFun x y) = show x ++ " -> " ++ show y
+  show (TPair x y) = "(" ++ show x ++ "," ++ show y ++ ")"
+
+instance Show Expr where
+  show (Lam x t y)                    = "lambda " ++ x ++ ":" ++ show t ++ ". " ++ show y
+  show (Var x)                        = x
+  show (App (Var x) (Var y))          = x ++ " " ++ y
+  show (App (Var a) (Lam x t y))      = a ++ " " ++ parens' (show (Lam x t y))
+  show (App (Lam x t y) (Var a))      = parens' (show (Lam x t y)) ++ " " ++ a
+  show (App (Lam x t y) (Lam a t2 b)) = parens' (show (Lam x t y)) ++ " " ++ parens' (show (Lam a t2 b))
+  show (App a (Lam x t y))            = parens' (show a) ++ " " ++ parens' (show (Lam x t y))
+  show (App (Lam x t y) a)            = parens' (show (Lam x t y)) ++ " " ++ parens' (show a)
+  show (App a (App x y))              = show a ++ " " ++ parens' (show (App x y))
+  show (App x y)                      = show x ++ " " ++ show y 
+  show (Let x y z)                    = "let " ++ show x ++ " " ++ show y ++ " in " ++ show z   
+  show (Bool x)                       = show x
+  show (TExp e t)                     = show e ++ ":" ++ show t
+  show (LetRec a b c)                 = show a ++ " " ++ show b ++ " " ++ show c
+  show (Num x)                        = show x
+  show (Less x y)                     = show x ++ " < " ++ show y
+  show (Greater x y)                  = show x ++ " > " ++ show y 
+  show (Leq x y)                      = show x ++ " <= " ++ show y
+  show (Geq x y)                      = show x ++ " >= " ++ show y
+  show (Equal x y)                    = show x ++ " == " ++ show y
+  show (Multiply x y)                 = show x ++ " * " ++ show y
+  show (Divide x y)                   = show x ++ " / " ++ show y
+  show (Plus x y)                     = show x ++ " + " ++ show y
+  show (Minus x y)                    = show x ++ " - " ++ show y
+  show (And x y)                      = show x ++ " && " ++ show y
+  show (Or x y)                       = show x ++ " || " ++ show y
+  show (Negative x)                   = "-" ++ show x
+  show (Not x)                        = "not " ++ show x
+  show (Fst (Pair x y))               = show x
+  show (Snd (Pair x y))               = show y
+  show (If x y z)                     = "if " ++ show x ++ " then " ++ show y ++ " else " ++ show z
+  show (Pair x y)                     = "(" ++ show x ++ "," ++ show y ++ ")"
+
+parens' :: String -> String
+parens' a = "(" ++ a ++ ")"
 
 typeOf :: Context -> Expr -> Either TypeError Type
 typeOf g (Var x) =
@@ -218,8 +261,6 @@ typeOf g (LetRec (TExp e1 t) e2 e3) =
                           Left $ Mismatch (LetRec e1 e2 e3) t t1
         _       -> Left $ Mismatch (LetRec e1 e2 e3) t t
 
-parens' :: String -> String
-parens' a = "(" ++ a ++ ")"
 
 isAlphaNumOrQuote :: Char -> Bool
 isAlphaNumOrQuote x = (isAlphaNum x) || (x == '\'')
@@ -266,7 +307,7 @@ ws :: Parser ()
 ws = pure () <* many (satisfy isSpace)
 
 keywords :: [String]
-keywords = ["let", "in", "lambda", "if", "then", "else", "+", "*", "and", "or", "-", "/", "==", "<", "<=", ">", ">=", "not", "fst", "snd"]
+keywords = ["let", "in", "lambda", "if", "then", "else", "+", "*", "and", "or", "-", "/", "==", "<", "<=", ">", ">=", "not", "fst", "snd", "let rec"]
 
 isKeyword = (`elem` keywords)
 
@@ -341,8 +382,13 @@ parsePair = Pair <$> (spaces *> char '(' *> spaces *> assign <* spaces <* char '
 
 app, assign, atom :: Parser Expr
 typer :: Parser Type
-assign = Let <$> (spaces *> str "let" *> (Var <$> var' <* spaces) <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> assign <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> assign) <*> (str' "in" *> spaces' *> assign) 
-     <|> helper <$> (Let <$> (spaces *> str "let" *> ((TExp <$> (Var <$> var' <* spaces <* char ':' <* spaces) <*> (tfun <* spaces))) <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> assign <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> assign) <*> (str' "in" *> spaces' *> assign)) 
+assign = LetRec <$> (spaces *> str "let rec" *> ((TExp <$> (Var <$> var' <* spaces <* char ':' <* spaces) 
+      <*> (tfun <* spaces))) <* char '=' <* spaces) <*> (TExp <$> (char '(' *> assign <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')  <|> assign) 
+      <*> (str' "in" *> spaces' *> assign)
+     <|> Let <$> (spaces *> str "let" *> (Var <$> var' <* spaces) <* char '=' <* spaces) <*> ((TExp <$> (char '(' *> assign <* spaces <* char ':' <* spaces) 
+      <*> (tfun <* char ')')) <|> assign) <*> (str' "in" *> spaces' *> assign) 
+     <|> helper <$> (Let <$> (spaces *> str "let" *> ((TExp <$> (Var <$> var' <* spaces <* char ':' <* spaces) <*> (tfun <* spaces))) <* char '=' <* spaces) 
+    <*> ((TExp <$> (char '(' *> assign <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> assign) <*> (str' "in" *> spaces' *> assign)) 
      <|> binop <|> lam <|> parsePair
 tfun = TFun <$> (typer <* spaces <* str "->") <*> (spaces *> tfun <* spaces) <|> typer
 typer = Tint <$ str "int" <|> TBool <$ str "bool" <|> char '(' *> tfun <* char ')'
@@ -511,7 +557,7 @@ getU str lst = if (isU lst) then
                  if (isJust (parse assign str) && (isRight(typeOf Map.empty lc))) then
                    putStr (show lc)
                  else
-                   die "Not parseable input"
+                   die "Does not Type Check"
                 where lc = eval (sub Map.empty (fst (fromJust (parse assign str))))
 
 
