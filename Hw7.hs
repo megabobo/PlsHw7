@@ -38,6 +38,7 @@ data Expr =
   | Bool Bool
   | TExp Expr Type
   | Let Expr Expr Expr
+  | LetRec Expr Expr Expr
   | Num Int
   | Less Expr Expr
   | Greater Expr Expr
@@ -125,35 +126,35 @@ typeOf g (Minus e1 e2) = do
 typeOf g (Equal e1 e2) = do
   t1 <- typeOf g e1
   t2 <- typeOf g e2
-  if (t1 == t2) then pure t1 
+  if (t1 == t2) then pure TBool 
     else Left $ Mismatch (Multiply e1 e2) t1 t2
 
 typeOf g (Less e1 e2) = do
   t1 <- typeOf g e1
   t2 <- typeOf g e2
   case (t1,t2) of
-     (Tint, Tint) -> pure t1
+     (Tint, Tint) -> pure TBool
      _         -> Left $ Mismatch (Less e1 e2) t1 t2
 
 typeOf g (Greater e1 e2) = do
   t1 <- typeOf g e1
   t2 <- typeOf g e2
   case (t1,t2) of
-     (Tint, Tint) -> pure t1
+     (Tint, Tint) -> pure TBool
      _         -> Left $ Mismatch (Greater e1 e2) t1 t2  
 
 typeOf g (Leq e1 e2) = do
   t1 <- typeOf g e1
   t2 <- typeOf g e2
   case (t1,t2) of
-     (Tint, Tint) -> pure t1
+     (Tint, Tint) -> pure TBool
      _         -> Left $ Mismatch (Leq e1 e2) t1 t2
 
 typeOf g (Geq e1 e2) = do
   t1 <- typeOf g e1
   t2 <- typeOf g e2
   case (t1,t2) of
-     (Tint, Tint) -> pure t1
+     (Tint, Tint) -> pure TBool
      _         -> Left $ Mismatch (Geq e1 e2) t1 t2
 
 typeOf g (And e1 e2) = do
@@ -206,6 +207,16 @@ typeOf g (Let e e1 e2) = do
                                          t2 <- typeOf (Map.insert x t1 g) e2
                                          pure t2
                             _     -> Left $ Mismatch (Let e e1 e2) t1 t1
+typeOf g (LetRec (TExp e1 t) e2 e3) = 
+      case e1 of
+        (Var x) -> do
+                     t1 <- typeOf (Map.insert x t g) e2
+                     if (t == t1) then do
+                                         t3 <- typeOf (Map.insert x t g) e3
+                                         pure t3
+                      else
+                          Left $ Mismatch (LetRec e1 e2 e3) t t1
+        _       -> Left $ Mismatch (LetRec e1 e2 e3) t t
 
 parens' :: String -> String
 parens' a = "(" ++ a ++ ")"
