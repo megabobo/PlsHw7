@@ -27,3 +27,9 @@ let8 = "let y = 1*2-3*7/4 in y * 4 -3"
 let9 = "let x’:int = 3*2-3*7/4 in x’ * 4 -3"
 let10 = "let x:int -> int = lambda x:int. x*3-2+11 in x"
 
+letreq1 = "let z = 5 in let rec down:int->int = lambda n:int. if (n<0) then z else down (n-1) in down z"
+
+letreq2 = "let z = 5 in let y = 4 in let rec down:int->int->int = lambda (n:int) (m:int). if (n<0) then z else down (n-1) y in down z y"
+
+
+

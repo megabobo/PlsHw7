@@ -432,8 +432,9 @@ sub m (Snd x) = Snd (sub m x)
 sub m (Let x y rest) = case eval (sub m y) of
                            (Var interpreted) -> sub (Map.insert x (Var interpreted) m) rest
                            test        -> sub (Map.insert x test m) rest
-sub m (LetRec (TExp (Var x) t) y e2) = sub m (eval (App (Lam x t e2) v))
-                                      where v = sub m (eval (App (Lam x t y) (LetRec (TExp (Var x) t) y (Var x))))
+sub m (LetRec f@(TExp (Var x) t) y (App (App a b) c)) =  LetRec f (sub m y) (App (App a (sub m b)) (sub m c))
+sub m (LetRec f@(TExp (Var x) t) y (App a b)) = LetRec f (sub m y) (App a (sub m b)) 
+sub m (LetRec f@(TExp (Var x) t) y e2) = LetRec f (sub m y) e2
 
 substitute :: String -> Expr -> Expr -> Expr
 substitute s (Var a) subIn = if (s == a) then
@@ -461,7 +462,8 @@ substitute s (And x y) subIn = And (substitute s x subIn) (substitute s y subIn)
 substitute s (Or x y) subIn = Or (substitute s x subIn) (substitute s y subIn)
 substitute s (Pair x y) subIn = Pair (substitute s x subIn) (substitute s y subIn)
 substitute s (Not x) subIn = Not (substitute s x subIn)
-substitute s (If x y z) subIn = If (substitute s x subIn) (substitute s y subIn) (substitute s z subIn)                           
+substitute s (If x y z) subIn = If (substitute s x subIn) (substitute s y subIn) (substitute s z subIn)
+substitute s (LetRec x y z) subIn = LetRec x (substitute s y subIn) z                      
 
 replace :: String -> Expr -> Expr -> Expr
 replace x l (Var a) = if (a == x) then
@@ -474,7 +476,7 @@ eval :: Expr -> Expr
 eval (App (Lam x t y) (App a b)) = eval (App (Lam x t y) (eval (App a b)))
 eval (App (Lam x t y) z) = eval (replace x y z)
 eval (App (App a b) z) = eval (App (eval (App a b)) z)
-eval (TExp e t) = eval e
+eval (App (LetRec (TExp x t) b c) n) = eval (LetRec (TExp x t) b (App c n))
 eval (Less x y) = Bool ((evalNums x) < (evalNums y))
 eval (Greater x y) = Bool ((evalNums x) > (evalNums y))
 eval (Leq x y) = Bool ((evalNums x) <= (evalNums y))
@@ -496,6 +498,7 @@ eval (If x y z) = if (evalBools x) then --changed
 eval (Pair x y) = Pair (eval x) (eval y)
 eval (Equal (Pair a b) (Pair c d)) = Bool ((eval a) == (eval c) && (eval b) == (eval d))
 eval (Equal x y) = Bool (eval x == eval y)
+eval (LetRec (TExp (Var x) t) e1 e2) = eval (App (Lam x t e2) (App (Lam x t e1) (LetRec (TExp (Var x) t) e1 (Var x))))
 eval x = x
 
 evalBools :: Expr -> Bool
@@ -508,6 +511,8 @@ evalBools (Less x y) = (evalNums x) < (evalNums y)
 evalBools (Greater x y) = (evalNums x) > (evalNums y)
 evalBools (Leq x y) = (evalNums x) <= (evalNums y)
 evalBools (Geq x y) = (evalNums x) >= (evalNums y)
+evalBools (App x y) = case eval (App x y) of
+                           Bool b -> b
 
 evalNums :: Expr -> Int
 evalNums (Num x) = x
@@ -515,7 +520,9 @@ evalNums (Plus x y) = (evalNums x) + (evalNums y)
 evalNums (Multiply x y) = (evalNums x) * (evalNums y)
 evalNums (Divide x y) = (evalNums x) `div` (evalNums y)
 evalNums (Minus x y) = (evalNums x) - (evalNums y)
-evalNums (Negative x) =  - (evalNums x) 
+evalNums (Negative x) =  - (evalNums x)
+evalNums (App x y) = case eval (App x y) of
+                           Num b -> b
 
 isDash :: [String] -> Bool
 isDash [] = False
