@@ -83,7 +83,8 @@ instance Show Expr where
   show (App a (App x y))              = show a ++ " " ++ parens' (show (App x y))
   show (App x y)                      = show x ++ " " ++ show y 
   show (Let x y z)                    = "let " ++ show x ++ " " ++ show y ++ " in " ++ show z   
-  show (Bool x)                       = show x
+  show (Bool True)                    = "true"
+  show (Bool False)                   = "false"
   show (TExp e t)                     = show e ++ ":" ++ show t
   show (LetRec a b c)                 = show a ++ " " ++ show b ++ " " ++ show c
   show (Num x)                        = show x
@@ -408,6 +409,7 @@ sub :: Map Expr Expr -> Expr -> Expr
 sub m (Var x) = case Map.lookup (Var x) m of
              Just v  -> v
              Nothing -> Var x
+sub m (Bool x) = Bool x
 sub m (App x y) = App (sub m x) (sub m y)
 sub m (Lam x t y) = Lam x t (sub (Map.delete (Var x) m) y)
 sub m (Pair x y) = Pair (sub m x) (sub m y)
@@ -435,6 +437,7 @@ sub m (Let x y rest) = case eval (sub m y) of
 sub m (LetRec f@(TExp (Var x) t) y (App (App a b) c)) =  LetRec f (sub m y) (App (App a (sub m b)) (sub m c))
 sub m (LetRec f@(TExp (Var x) t) y (App a b)) = LetRec f (sub m y) (App a (sub m b)) 
 sub m (LetRec f@(TExp (Var x) t) y e2) = LetRec f (sub m y) e2
+sub _ _ = error $ "you screwed up"
 
 substitute :: String -> Expr -> Expr -> Expr
 substitute s (Var a) subIn = if (s == a) then
@@ -513,6 +516,7 @@ evalBools (Leq x y) = (evalNums x) <= (evalNums y)
 evalBools (Geq x y) = (evalNums x) >= (evalNums y)
 evalBools (App x y) = case eval (App x y) of
                            Bool b -> b
+evalBools _ = error $ "You screwed up"
 
 evalNums :: Expr -> Int
 evalNums (Num x) = x
@@ -523,6 +527,7 @@ evalNums (Minus x y) = (evalNums x) - (evalNums y)
 evalNums (Negative x) =  - (evalNums x)
 evalNums (App x y) = case eval (App x y) of
                            Num b -> b
+evalNums _ = error $ "You screwed up"
 
 isDash :: [String] -> Bool
 isDash [] = False
@@ -559,15 +564,15 @@ getDash lst = if (isDash lst) then
 getU :: String -> [String] -> IO ()
 getU str lst = if (isU lst) then
                  if (isJust (parse assign str)) then                           
-                   putStr (show lc)
+                   putStr (show (eval lc))
                  else
                    die "Not parseable input"
                else
                  if (isJust (parse assign str) && (isRight(typeOf Map.empty lc))) then
-                   putStr (show lc)
+                   putStr (show (eval lc))
                  else
                    die "Does not Type Check"
-                where lc = eval (sub Map.empty (fst (fromJust (parse assign str))))
+                where lc = sub Map.empty (fst (fromJust (parse assign str)))
 
 
 main :: IO ()
