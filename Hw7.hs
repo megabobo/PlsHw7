@@ -29,6 +29,8 @@ instance Alternative Parser where
    empty = Parser $ \s -> Nothing
    l <|> r = Parser $ \s -> parse l s <|> parse r s
 
+data Error = NotValidExpr deriving Show
+
 type VarName = String
 
 data Expr =
@@ -101,8 +103,8 @@ instance Show Expr where
   show (Or x y)                       = show x ++ " || " ++ show y
   show (Negative x)                   = "-" ++ show x
   show (Not x)                        = "not " ++ show x
-  show (Fst (Pair x y))               = show x
-  show (Snd (Pair x y))               = show y
+  show (Fst x)                        = "fst " ++ show x
+  show (Snd x)                        = "snd " ++ show x
   show (If x y z)                     = "if " ++ show x ++ " then " ++ show y ++ " else " ++ show z
   show (Pair x y)                     = "(" ++ show x ++ "," ++ show y ++ ")"
 
@@ -308,7 +310,7 @@ ws :: Parser ()
 ws = pure () <* many (satisfy isSpace)
 
 keywords :: [String]
-keywords = ["let", "in", "lambda", "if", "then", "else", "+", "*", "and", "or", "-", "/", "==", "<", "<=", ">", ">=", "not", "fst", "snd", "let rec"]
+keywords = ["let", "in", "lambda", "if", "then", "else", "+", "*", "and", "or", "-", "/", "==", "<", "<=", ">", ">=", "not", "fst", "snd", "let rec", "true", "false"]
 
 isKeyword = (`elem` keywords)
 
@@ -337,14 +339,14 @@ lam = spaces *> str "lambda" *> spaces' *> vars <|> TExp <$> (spaces *> char '('
 
 ifelse :: Parser Expr
 ifelse = If <$> (spaces *> str "if" *> spaces' *> binop)
-          <*> (str "then" *> spaces' *> assign) --changed, was lam
-          <*> (spaces' *> str "else" *> spaces' *> assign) --changed, was lam
+          <*> (str "then" *> spaces' *> assign) 
+          <*> (spaces' *> str "else" *> spaces' *> assign) 
           <|> app
 
 binop :: Parser Expr
 binop = comp `chainl1` comparison
     where comparison =  str "==" *> pure Equal
-                    <|> str ">=" *> pure Geq     --changed, switched the order of >,< with >=, <= 
+                    <|> str ">=" *> pure Geq     
                     <|> str "<=" *> pure Leq
                     <|> str "<"  *> pure Less
                     <|> str ">"  *> pure Greater
@@ -369,12 +371,12 @@ tight = compOp <|> app
 vars' :: Parser (Expr -> Expr)
 vars' = Lam <$> (var <* spaces <* char ':' <* spaces) 
            <*> (tfun <* spaces) 
-           <|> spaces *> char '(' *> vars' <* spaces <* char ')' --added, lambda ((x:int)). x
+           <|> spaces *> char '(' *> vars' <* spaces <* char ')' 
 
 vars :: Parser Expr
 vars = Lam <$> (var <* char ':' <* spaces) 
-           <*> (tfun <* spaces <* char '.' <* spaces <|> tfun <* spaces) <*> assign -- changed, was lam
-           <|> spaces *> char '(' *> vars' <*  spaces <* char ')' <* spaces <* char '.' <* spaces <*> assign --changed, was lam
+           <*> (tfun <* spaces <* char '.' <* spaces <|> tfun <* spaces) <*> assign 
+           <|> spaces *> char '(' *> vars' <*  spaces <* char ')' <* spaces <* char '.' <* spaces <*> assign 
            <|> spaces *> char '(' *> vars' <* spaces <* char ')' <* spaces <*> vars
 
 parsePair :: Parser Expr
@@ -392,7 +394,7 @@ assign = LetRec <$> (spaces *> str "let rec" *> ((TExp <$> (Var <$> var' <* spac
     <*> ((TExp <$> (char '(' *> assign <* spaces <* char ':' <* spaces) <*> (tfun <* char ')')) <|> assign) <*> (str' "in" *> spaces' *> assign)) 
      <|> binop <|> lam <|> parsePair
 tfun = TFun <$> (typer <* spaces <* str "->") <*> (spaces *> tfun <* spaces) <|> typer
-typer = Tint <$ str "int" <|> TBool <$ str "bool" <|> char '(' *> tfun <* char ')'
+typer = Tint <$ str "int" <|> TBool <$ str "bool" <|> TPair <$> (char '(' *> spaces *> tfun <* spaces <* char ',' <* spaces) <*> (tfun <* spaces <* char ')') <|> char '(' *> tfun <* char ')'
 app = atom `chainl1` (spaces' *> pure App)  
 atom = Bool True <$ str "true" <|> Bool False <$ str "false" <|> Num <$> int 
        <|> Var <$> var <|> (char '(' *> lam <* char ')') <|> (char '(' *> binop <* char ')')
@@ -405,39 +407,36 @@ helper (Let (TExp exp t) (exp2) (exp3)) = Let (exp) (TExp (exp2) t) (exp3)
 helper _                                = error "dumbass"
 
 
-sub :: Map Expr Expr -> Expr -> Expr
+sub :: Map Expr Expr -> Expr -> Either Error Expr
 sub m (Var x) = case Map.lookup (Var x) m of
-             Just v  -> v
-             Nothing -> Var x
-sub m (Bool x) = Bool x
-sub m (App x y) = App (sub m x) (sub m y)
-sub m (Lam x t y) = Lam x t (sub (Map.delete (Var x) m) y)
-sub m (Pair x y) = Pair (sub m x) (sub m y)
-sub m (If x y z) = If (sub m x) (sub m y) (sub m z)
+             Just v  -> Right v
+             Nothing -> Right (Var x)
+sub m (Bool x) = Right (Bool x)
+sub m (App x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (App s t)))
+sub m (Lam x t y) = (sub (Map.delete (Var x) m) y) >>= (\s -> pure (Lam x t s))
+sub m (Pair x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (Pair s t)))
+sub m (If x y z) = sub m x >>= (\s -> sub m y >>= (\t -> sub m z >>= (\w -> pure (If s t w))))
 sub m (TExp e t) = sub m e
-sub m (Less x y) = Less (sub m x) (sub m y)
-sub m (Greater x y) = Greater (sub m x) (sub m y)
-sub m (Leq x y) = Leq (sub m x) (sub m y)
-sub m (Geq x y) = Geq (sub m x) (sub m y)
-sub m (Equal x y) = Equal (sub m x) (sub m y)
-sub m (Divide x y) = Divide (sub m x) (sub m y)
-sub m (Multiply x y) = Multiply (sub m x) (sub m y)
-sub m (Plus x y) = Plus (sub m x) (sub m y)
-sub m (Minus x y) = Minus (sub m x) (sub m y)
-sub m (And x y) = And (sub m x) (sub m y)
-sub m (Or x y) = Or (sub m x) (sub m y)
-sub m (Negative x) = Negative (sub m x) 
-sub m (Num x) = Num x
-sub m (Not x) = Not (sub m x)
-sub m (Fst x) = Fst (sub m x)  
-sub m (Snd x) = Snd (sub m x)  
-sub m (Let x y rest) = case eval (sub m y) of
-                           (Var interpreted) -> sub (Map.insert x (Var interpreted) m) rest
-                           test        -> sub (Map.insert x test m) rest
-sub m (LetRec f@(TExp (Var x) t) y (App (App a b) c)) =  LetRec f (sub m y) (App (App a (sub m b)) (sub m c))
-sub m (LetRec f@(TExp (Var x) t) y (App a b)) = LetRec f (sub m y) (App a (sub m b)) 
-sub m (LetRec f@(TExp (Var x) t) y e2) = LetRec f (sub m y) e2
-sub _ _ = error $ "you screwed up"
+sub m (Less x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (Less s t)))
+sub m (Greater x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (Greater s t)))
+sub m (Leq x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (Leq s t)))
+sub m (Geq x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (Geq s t)))
+sub m (Equal x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (Equal s t)))
+sub m (Divide x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (Divide s t)))
+sub m (Multiply x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (Multiply s t)))
+sub m (Plus x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (Plus s t)))
+sub m (Minus x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (Minus s t)))
+sub m (And x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (And s t)))
+sub m (Or x y) = sub m x >>= (\s -> sub m y >>= (\t -> pure (Or s t)))
+sub m (Negative x) = sub m x >>= (\s -> pure (Negative s)) 
+sub m (Num x) = Right (Num x)
+sub m (Not x) = sub m x >>= (\s -> pure (Not s))
+sub m (Fst x) = sub m x >>= (\s -> pure (Fst s))  
+sub m (Snd x) = sub m x >>= (\s -> pure (Snd s))    
+sub m (Let x y rest) = sub m y >>= (\s -> case eval s of 
+                                       Right w -> sub (Map.insert x w m) rest
+                                       _        -> Left $ NotValidExpr)
+sub m (LetRec f@(TExp (Var x) t) y e2) = sub m y >>= (\s -> sub m e2 >>= (\w -> pure (LetRec f s w)))
 
 substitute :: String -> Expr -> Expr -> Expr
 substitute s (Var a) subIn = if (s == a) then
@@ -466,7 +465,9 @@ substitute s (Or x y) subIn = Or (substitute s x subIn) (substitute s y subIn)
 substitute s (Pair x y) subIn = Pair (substitute s x subIn) (substitute s y subIn)
 substitute s (Not x) subIn = Not (substitute s x subIn)
 substitute s (If x y z) subIn = If (substitute s x subIn) (substitute s y subIn) (substitute s z subIn)
-substitute s (LetRec x y z) subIn = LetRec x (substitute s y subIn) z                      
+substitute s (LetRec x y z) subIn = LetRec x (substitute s y subIn) z    
+substitute s (Fst x) subIn = Fst (substitute s x subIn)  
+substitute s (Snd x) subIn = Snd (substitute s x subIn)                                  
 
 replace :: String -> Expr -> Expr -> Expr
 replace x l (Var a) = if (a == x) then
@@ -475,59 +476,68 @@ replace x l (Var a) = if (a == x) then
                         substitute x l (Var a)
 replace x l a = substitute x l a
 
-eval :: Expr -> Expr
-eval (App (Lam x t y) (App a b)) = eval (App (Lam x t y) (eval (App a b)))
+eval :: Expr -> Either Error Expr
+eval (App (Lam x t y) (App a b)) = eval (App a b) >>= (\s -> eval (App (Lam x t y) s))
 eval (App (Lam x t y) z) = eval (replace x y z)
-eval (App (App a b) z) = eval (App (eval (App a b)) z)
+eval (App (App a b) z) = eval (App a b) >>= (\s -> eval (App s z))
 eval (App (LetRec (TExp x t) b c) n) = eval (LetRec (TExp x t) b (App c n))
-eval (Less x y) = Bool ((evalNums x) < (evalNums y))
-eval (Greater x y) = Bool ((evalNums x) > (evalNums y))
-eval (Leq x y) = Bool ((evalNums x) <= (evalNums y))
-eval (Geq x y) = Bool ((evalNums x) >= (evalNums y))
-eval (Multiply x y) = Num ((evalNums x) * (evalNums y))
-eval (Divide x y) = Num ((evalNums x) `div` (evalNums y))
-eval (Plus x y) = Num ((evalNums x) + (evalNums y))
-eval (Minus x y) = Num ((evalNums x) - (evalNums y))
-eval (And x y) = Bool ((evalBools x) && (evalBools y))
-eval (Or x y) = Bool ((evalBools x) || (evalBools y))
-eval (Negative x) = Num (- (evalNums x))
-eval (Not x) = Bool (not $ evalBools x)
+eval (App (Fst x) y) = eval (Fst x) >>= (\s -> eval (App s y)) 
+eval (App (Snd x) y) = eval (Snd x) >>= (\s -> eval (App s y)) 
+eval (App (If x y z) w) = eval (If x y z) >>= (\s -> eval (App s w))
+eval (Less x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (Bool $ s < t)))
+eval (Greater x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (Bool $ s > t)))
+eval (Leq x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (Bool $ s <= t)))
+eval (Geq x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (Bool $ s >= t)))
+eval (Multiply x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (Num $ s * t)))
+eval (Divide x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (Num $ s `div` t)))
+eval (Plus x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (Num $ s + t)))
+eval (Minus x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (Num $ s - t)))
+eval (And x y) = evalBools x >>= (\s -> evalBools y >>= (\t -> pure (Bool $ s && t)))
+eval (Or x y) = evalBools x >>= (\s -> evalBools y >>= (\t -> pure (Bool $ s || t)))
+eval (Negative x) = evalNums x >>= (\s -> pure (Num (-s)))
+eval (Not x) = evalBools x >>= (\s -> pure (Bool $ not s))
 eval (Fst (Pair x _)) = eval x
 eval (Snd (Pair _ y)) = eval y
-eval (If x y z) = if (evalBools x) then --changed
-                    eval y
-                  else 
-                    eval z
-eval (Pair x y) = Pair (eval x) (eval y)
-eval (Equal (Pair a b) (Pair c d)) = Bool ((eval a) == (eval c) && (eval b) == (eval d))
-eval (Equal x y) = Bool (eval x == eval y)
+eval (If x y z) = evalBools x >>= (\s -> if s then eval y else eval z) 
+eval (Pair x y) = eval x >>= (\s -> eval y >>= (\t -> pure (Pair s t)))
+eval (Equal (Pair a b) (Pair c d)) = eval a >>= (\s -> eval b >>= (\t -> eval c >>= (\y -> eval d >>= (\z -> pure (Bool (s == y && t == z))))))
+eval (Equal (Lam x t y) (Lam w t1 z)) = Left NotValidExpr
+eval (Equal x y) = eval x >>= (\s -> eval y >>= (\t -> pure (Bool $ s == t)))
 eval (LetRec (TExp (Var x) t) e1 e2) = eval (App (Lam x t e2) (App (Lam x t e1) (LetRec (TExp (Var x) t) e1 (Var x))))
-eval x = x
+eval (TExp e t) = eval e
+eval (Num x) = Right $ Num x
+eval (Bool x) = Right $ Bool x
+eval (Var x) = Right $ Var x
+eval f@(Lam x t y) = Right f 
+eval _ = Left NotValidExpr
 
-evalBools :: Expr -> Bool
-evalBools (Bool x) = x
-evalBools (And x y) = (evalBools x) && (evalBools y)
-evalBools (Or x y) = (evalBools x) || (evalBools y)
-evalBools (Not x) = not $ evalBools x
-evalBools (Equal x y) = (eval x) == (eval y)
-evalBools (Less x y) = (evalNums x) < (evalNums y)
-evalBools (Greater x y) = (evalNums x) > (evalNums y)
-evalBools (Leq x y) = (evalNums x) <= (evalNums y)
-evalBools (Geq x y) = (evalNums x) >= (evalNums y)
+
+evalBools :: Expr -> Either Error Bool
+evalBools (Bool x) = Right x
+evalBools (And x y) = evalBools x >>= (\s -> evalBools y >>= (\t -> pure (s && t)))
+evalBools (Or x y) = evalBools x >>= (\s -> evalBools y >>= (\t -> pure (s || t)))
+evalBools (Not x) = evalBools x >>= (\s -> pure (not s))
+evalBools (Equal x y) = eval x >>= (\s -> eval y >>= (\t -> pure (s == t)))
+evalBools (Less x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (s < t)))
+evalBools (Greater x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (s > t)))
+evalBools (Leq x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (s <= t)))
+evalBools (Geq x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (s >= t)))
 evalBools (App x y) = case eval (App x y) of
-                           Bool b -> b
-evalBools _ = error $ "You screwed up"
+                           Right (Bool s) -> Right s
+                           _       -> Left $ NotValidExpr
+evalBools _ = Left NotValidExpr 
 
-evalNums :: Expr -> Int
-evalNums (Num x) = x
-evalNums (Plus x y) = (evalNums x) + (evalNums y)
-evalNums (Multiply x y) = (evalNums x) * (evalNums y)
-evalNums (Divide x y) = (evalNums x) `div` (evalNums y)
-evalNums (Minus x y) = (evalNums x) - (evalNums y)
-evalNums (Negative x) =  - (evalNums x)
+evalNums :: Expr -> Either Error Int
+evalNums (Num x) = Right x
+evalNums (Plus x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (s + t)))
+evalNums (Multiply x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (s * t)))
+evalNums (Divide x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (s `div` t)))
+evalNums (Minus x y) = evalNums x >>= (\s -> evalNums y >>= (\t -> pure (s - t)))
+evalNums (Negative x) =  evalNums x >>= (\s -> pure (-s))
 evalNums (App x y) = case eval (App x y) of
-                           Num b -> b
-evalNums _ = error $ "You screwed up"
+                           Right (Num s) -> Right s
+                           _       -> Left $ NotValidExpr
+evalNums _ = Left NotValidExpr
 
 isDash :: [String] -> Bool
 isDash [] = False
@@ -563,16 +573,25 @@ getDash lst = if (isDash lst) then
 
 getU :: String -> [String] -> IO ()
 getU str lst = if (isU lst) then
-                 if (isJust (parse assign str)) then                           
-                   putStr (show (eval lc))
-                 else
-                   die "Not parseable input"
+                  case lc of
+                    Just (a,b) -> case sub Map.empty a of 
+                                Right s -> case eval s of
+                                            Right w -> putStr $ show w
+                                            Left e  -> die "Not a valid Expression"
+                                Left e  -> die "Not a valid Expression"                          
+                    Nothing  -> die "Not a valid Expression"
                else
-                 if (isJust (parse assign str) && (isRight(typeOf Map.empty lc))) then
-                   putStr (show (eval lc))
-                 else
-                   die "Does not Type Check"
-                where lc = sub Map.empty (fst (fromJust (parse assign str)))
+                  case lc of 
+                    Just (a,b) -> if (isRight (typeOf Map.empty a)) then
+                                   case sub Map.empty a of
+                                    Right s -> case eval s of
+                                                Right w -> putStr $ show w
+                                                Left e  -> die "Not a valid Expression"
+                                    Left e  -> die "Not a valid Expression"
+                                  else
+                                   die "Not a valid Expression"
+                    Nothing  -> die "Not a valid Expression" 
+                where lc = parse assign str
 
 
 main :: IO ()
